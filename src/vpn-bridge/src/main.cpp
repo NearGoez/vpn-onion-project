@@ -1,47 +1,50 @@
 #include "tun_device.hpp"
 #include "ipc_socket.hpp"
+#include "event_loop.hpp"
+
 #include <iostream>
-#include <cstring>
-#include <chrono>
-#include <thread>
+#include <csignal>
+#include <memory>
+
+// puntero global para poder acceder desde el loop
+std::unique_ptr<EventLoop> global_loop = nullptr;
+
+void signal_handler(int signum) {
+    std::cout << "\n[MAIN] signal (" << signum << ") recibida. Matando componentes" << std::endl;
+    if (global_loop) {
+        global_loop->stop();
+    }
+}
 
 int main() {
+    struct sigaction sa;
+    sa.sa_handler = signal_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    if (sigaction(SIGINT, &sa, nullptr) < 0 || sigaction(SIGTERM, &sa, nullptr) < 0) {
+        std::cerr << "[CRITICAL] No se pudo iniciar el signar handler" << std::endl;
+        return 1;
+    }
     try {
-        std::cout << "[MAIN] Iniciando componente vpn-bridge..."  << std::endl;
-        
-        // Hito 1: tun tap
+        std::cout << "[MAIN] Iniciando.." << std::endl;
+
         TunDevice tun("vpn0");
         tun.initialize();
 
-        std::cout << "[MAIN] Manteniendo proceso vivo. Verifica con: 'ip link show vpn0'" << std::endl;
-        std::cout << "Presione Ctrl+C para destruir el proceso..." << std::endl;
-    
-        // Hito 2: ipc server
         IpcSocket ipc("/tmp/onion_vpn.sock");
-        std::cout << "[MAIN] Conectando el servidor de Go" << std::endl;
         ipc.connect_server();
+
+        global_loop = std::make_unique<EventLoop>(tun.get_fd(), ipc.get_fd());
         
-        // payload de prueba para ipc
-        char dummy_packet[20];
-        std::memset(dummy_packet, 0, sizeof(dummy_packet));
-        dummy_packet[0] = 0x45;
+        global_loop->start();
 
-
-        std::cout << "[MAIN] enviando paquete de pruebas a traves de IPC" << std::endl;
-        ssize_t sent = ipc.send_packet(dummy_packet, sizeof(dummy_packet));
-        std::cout << "[MAIN] bytes enviados a travez de IPC: " << sent << std::endl;
-
+        global_loop.reset();
         ipc.close_socket();
         tun.close_device();
-
-        
-        while (true) {
-            std::this_thread::sleep_for(std::chrono::seconds(1));
-        }
+        std::cout << "[MAIN] finalizado" << std::endl;
     } catch (const std::exception& e) {
-        std::cerr << "[CRITICAL] Exception: " << e.what() << std::endl;
+        std::cerr << "[CRITICAL] error en ejecucion" << e.what() << std::endl;
         return 1;
     }
-
     return 0;
 }
