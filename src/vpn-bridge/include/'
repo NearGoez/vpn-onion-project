@@ -1,7 +1,6 @@
 #include "tun_device.hpp"
 #include "ipc_socket.hpp"
 #include <iostream>
-#include <cstring>
 #include <chrono>
 #include <thread>
 
@@ -17,7 +16,6 @@ int main() {
         std::cout << "Presione Ctrl+C para destruir el proceso..." << std::endl;
     
         // Hito 2: ipc server
-        IpcSocket ipc("/tmp/onion_vpn.sock");
         std::cout << "[MAIN] Conectando el servidor de Go" << std::endl;
         ipc.connect_server();
         
@@ -25,11 +23,6 @@ int main() {
         char dummy_packet[20];
         std::memset(dummy_packet, 0, sizeof(dummy_packet));
         dummy_packet[0] = 0x45;
-
-
-        std::cout << "[MAIN] enviando paquete de pruebas a traves de IPC" << std::endl;
-        ssize_t sent = ipc.send_packet(dummy_packet, sizeof(dummy_packet));
-        std::cout << "[MAIN] bytes enviados a travez de IPC: " << sent << std::endl;
 
         ipc.close_socket();
         tun.close_device();
