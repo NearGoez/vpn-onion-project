@@ -336,6 +336,14 @@ func startWebServer() {
 		c2, _ := crypto.Encrypt(key2[:], c3)
 		c1, _ := crypto.Encrypt(key1[:], c2)
 
+		// Enviamos un paquete UDP real al puerto 9001 local para que tcpdump lo capture físicamente
+		udpConn, err := net.Dial("udp", "127.0.0.1:9001")
+		if err == nil {
+			cell := onion.NewCell(100, onion.CmdRelay, c1)
+			_, _ = udpConn.Write(cell.Serialize())
+			_ = udpConn.Close()
+		}
+
 		// 2. Descifrado en los nodos (del primer nodo al último)
 		d1, _ := onion.PeelLayer(c1, key1[:])
 		d2, _ := onion.PeelLayer(d1, key2[:])
