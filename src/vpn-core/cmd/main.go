@@ -344,6 +344,14 @@ func startWebServer() {
 			_ = udpConn.Close()
 		}
 
+		// Enviamos el mismo mensaje en texto plano (sin cifrar) al puerto 9999 local.
+		// Esto simula la transmisión insegura y permite a tcpdump capturar el mensaje en texto claro.
+		insecureConn, err := net.Dial("udp", "127.0.0.1:9999")
+		if err == nil {
+			_, _ = insecureConn.Write([]byte(message))
+			_ = insecureConn.Close()
+		}
+
 		// 2. Descifrado en los nodos (del primer nodo al último)
 		d1, _ := onion.PeelLayer(c1, key1[:])
 		d2, _ := onion.PeelLayer(d1, key2[:])
