@@ -3,12 +3,15 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"vpn-core/internal/crypto"
 	"vpn-core/internal/onion"
 	"vpn-core/internal/transport"
 )
@@ -49,6 +52,9 @@ func main() {
 		go runNode(2, 9002, "127.0.0.1:9003", "127.0.0.1:9001", key2[:], nil)
 		go runNode(1, 9001, "127.0.0.1:9002", "127.0.0.1:9000", key1[:], nil)
 		
+		// Levantamos el servidor web interactivo para la presentación
+		go startWebServer()
+
 		// El hilo principal ejecuta el cliente
 		runClient(sigChan)
 	default:
@@ -309,5 +315,52 @@ func ipChecksum(data []byte) uint16 {
 		sum = (sum & 0xffff) + (sum >> 16)
 	}
 	return uint16(^sum)
+}
+
+// startWebServer levanta un servidor HTTP local que sirve la interfaz web de la demo.
+func startWebServer() {
+	// Servimos la página web estática
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "cmd/index.html")
+	})
+
+	// API que simula el cifrado Onion multicapa en tiempo real y retorna los logs del circuito
+	http.HandleFunc("/api/simulate", func(w http.ResponseWriter, r *http.Request) {
+		message := r.URL.Query().Get("message")
+		if message == "" {
+			message = "Mensaje vacío"
+		}
+
+		// 1. Cifrado en el cliente (de atrás hacia adelante: 3 -> 2 -> 1)
+		c3, _ := crypto.Encrypt(key3[:], []byte(message))
+		c2, _ := crypto.Encrypt(key2[:], c3)
+		c1, _ := crypto.Encrypt(key1[:], c2)
+
+		// 2. Descifrado en los nodos (del primer nodo al último)
+		d1, _ := onion.PeelLayer(c1, key1[:])
+		d2, _ := onion.PeelLayer(d1, key2[:])
+		d3, _ := onion.PeelLayer(d2, key3[:])
+
+		steps := []string{
+			fmt.Sprintf("[CLIENTE] Capturado mensaje local: '%s'", message),
+			fmt.Sprintf("[CLIENTE] Cifrado con Llave 3 (Exit) -> HEX: %x...", c3[:12]),
+			fmt.Sprintf("[CLIENTE] Cifrado con Llave 2 (Medio) -> HEX: %x...", c2[:12]),
+			fmt.Sprintf("[CLIENTE] Cifrado con Llave 1 (Entrada) -> HEX: %x...", c1[:12]),
+			fmt.Sprintf("[NODO 1] Celda recibida. Descifrada Capa 1. Reenviando (HEX: %x...)", d1[:12]),
+			fmt.Sprintf("[NODO 2] Celda recibida. Descifrada Capa 2. Reenviando (HEX: %x...)", d2[:12]),
+			fmt.Sprintf("[EXIT NODE] Celda recibida. Descifrada capa 3 final."),
+			fmt.Sprintf("[EXIT NODE] ¡Mensaje de origen descifrado con éxito!: '%s'", string(d3)),
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string][]string{
+			"safe_steps": steps,
+		})
+	})
+
+	fmt.Println("[WEB] Dashboard interactivo listo en http://localhost:8080")
+	if err := http.ListenAndServe(":8080", nil); err != nil {
+		fmt.Printf("[WEB ERROR] No se pudo levantar el servidor web: %v\n", err)
+	}
 }
 
